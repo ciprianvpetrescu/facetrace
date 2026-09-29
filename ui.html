@@ -1,0 +1,441 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover,user-scalable=no">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="theme-color" content="#05080a">
+<title>facetrace</title>
+<style>
+  :root{--bg:#05080a;--panel:#0a1114;--line:#16262d;--ink:#d7e8ee;--dim:#6b8894;
+        --acc:#2ee6c8;--warn:#ffb64d;--crit:#ff5a6a}
+  *{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
+  html,body{margin:0;height:100%;background:var(--bg);color:var(--ink);
+    font:14px/1.45 ui-monospace,SFMono-Regular,Menlo,monospace;overscroll-behavior:none}
+  body{display:flex;flex-direction:column;padding:env(safe-area-inset-top) 0 env(safe-area-inset-bottom)}
+  header{display:flex;align-items:center;gap:10px;padding:10px 14px;border-bottom:1px solid var(--line);flex:0 0 auto}
+  .dot{width:7px;height:7px;border-radius:50%;background:var(--dim)}
+  .dot.live{background:var(--acc);box-shadow:0 0 8px var(--acc);animation:p 1.6s infinite}
+  @keyframes p{50%{opacity:.35}}
+  h1{font-size:13px;letter-spacing:.16em;margin:0;font-weight:600;text-transform:uppercase}
+  .spacer{flex:1}
+  .stat{font-size:11px;color:var(--dim)}
+  main{flex:1 1 auto;display:flex;flex-direction:column;min-height:0;position:relative}
+  #stage{position:relative;flex:1 1 auto;min-height:0;background:#000;overflow:hidden;display:flex;align-items:center;justify-content:center}
+  video{width:100%;height:100%;object-fit:cover;display:block}
+  video.mirror{transform:scaleX(-1)}
+  #overlay{position:absolute;inset:0;pointer-events:none}
+  .box{position:absolute;border:2px solid var(--acc);border-radius:4px;box-shadow:0 0 12px rgba(46,230,200,.35)}
+  .box.hit{border-color:var(--warn);box-shadow:0 0 14px rgba(255,182,77,.45)}
+  .box .tag{position:absolute;top:-19px;left:-2px;font-size:10px;padding:1px 5px;border-radius:3px;
+    background:var(--acc);color:#04120f;white-space:nowrap}
+  .box.hit .tag{background:var(--warn)}
+  #hud{position:absolute;left:10px;top:10px;font-size:10px;color:var(--acc);
+    background:rgba(5,8,10,.72);padding:4px 7px;border-radius:3px;line-height:1.5}
+  #toast{position:absolute;left:50%;transform:translateX(-50%);bottom:10px;
+    max-width:86%;background:rgba(5,8,10,.9);border:1px solid var(--line);
+    border-radius:8px;padding:6px 10px;font-size:11px;line-height:1.35;color:var(--ink);
+    opacity:0;transition:opacity .18s;pointer-events:none;z-index:5;text-align:center}
+  #toast.show{opacity:1}
+  #toast.good{border-color:#2ee6c8;color:#2ee6c8}
+  #toast.bad{border-color:#ff5a6a;color:#ff5a6a}
+  #liveWrap{position:fixed;inset:0;background:#05080a;z-index:60;display:none;flex-direction:column}
+  #liveWrap.show{display:flex}
+  #liveBar{display:flex;align-items:center;gap:8px;padding:8px 12px;border-bottom:1px solid var(--line);flex:0 0 auto}
+  #liveBar .t{font-size:11px;color:var(--acc);letter-spacing:.1em;text-transform:uppercase}
+  #liveBar .s{font-size:10px;color:var(--dim);flex:1;text-align:right;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  #liveFrame{flex:1 1 auto;min-height:0;border:0;width:100%;background:#000}
+  #liveFoot{display:flex;gap:8px;padding:8px 12px;border-top:1px solid var(--line);flex:0 0 auto}
+  #liveFoot button{padding:11px 10px}
+  footer{flex:0 0 auto;border-top:1px solid var(--line);background:var(--panel)}
+  .row{display:flex;gap:8px;padding:10px 12px}
+  button{flex:1;padding:13px 10px;border:1px solid var(--line);background:#0d181c;color:var(--ink);
+    font:inherit;font-size:12px;border-radius:6px;cursor:pointer}
+  button:active{transform:translateY(1px)}
+  button.primary{border-color:var(--acc);color:var(--acc)}
+  button.on{background:rgba(46,230,200,.14);border-color:var(--acc);color:var(--acc)}
+  button:disabled{opacity:.4}
+  #panel{max-height:38vh;overflow-y:auto;border-top:1px solid var(--line);display:none}
+  #panel.show{display:block}
+  .item{padding:9px 14px;border-bottom:1px solid var(--line);font-size:12px}
+  .item b{color:var(--acc);font-weight:600}
+  .item .k{color:var(--dim)}
+  .thumb{width:34px;height:34px;object-fit:cover;border-radius:4px;border:1px solid var(--line);vertical-align:middle;margin-right:8px}
+  .warn{color:var(--warn)}.crit{color:var(--crit)}.dim{color:var(--dim)}
+  .empty{padding:14px;color:var(--dim);font-size:12px}
+  #gate{position:fixed;inset:0;background:var(--bg);display:flex;align-items:center;justify-content:center;padding:24px;z-index:50;text-align:center}
+  #gate .card{max-width:420px}
+  #gate h2{font-size:14px;letter-spacing:.1em;margin:0 0 10px}
+  #gate p{font-size:12px;color:var(--dim);margin:0 0 16px}
+</style>
+</head>
+<body>
+
+<div id="gate">
+  <div class="card">
+    <h2>FACETRACE</h2>
+    <p>Real-time face detection and local matching, with an optional
+       web lookup. This is a testing rig, not a production system.</p>
+    <button class="primary" id="startBtn">Start camera</button>
+    <p style="margin-top:16px">Camera frames stay on this device unless you
+       press Look up. Detection and matching run on the server; only an
+       explicitly pressed lookup sends a face out.</p>
+  </div>
+</div>
+
+<header>
+  <span class="dot" id="dot"></span>
+  <h1>facetrace</h1>
+  <span class="spacer"></span>
+  <span class="stat" id="stat">idle</span>
+</header>
+
+<main>
+  <div id="stage">
+    <video id="vid" playsinline muted autoplay></video>
+    <div id="overlay"></div>
+    <div id="hud">scan off</div>
+    <div id="toast"></div>
+  </div>
+  <div id="panel"><div class="empty">No activity yet.</div></div>
+  <div id="liveWrap">
+    <div id="liveBar">
+      <span class="t">pimeyes</span>
+      <span class="s" id="liveStat">not started</span>
+      <button id="liveX" style="flex:0 0 auto;padding:6px 10px;font-size:11px">close</button>
+    </div>
+    <iframe id="liveFrame" src="about:blank" allow="clipboard-write"></iframe>
+    <div id="liveFoot">
+      <button id="liveSolve" class="primary">auto solve</button>
+      <button id="liveSend">send my face</button>
+      <button id="liveGet">read results</button>
+    </div>
+  </div>
+</main></main>
+
+<footer>
+  <div class="row">
+    <button id="scanBtn" class="on">Scan on</button>
+    <button id="boxesBtn" class="on">Boxes</button>
+    <button id="flipBtn">Flip</button>
+    <button id="lookBtn" class="primary">Look up</button>
+    <button id="liveBtn">Live</button>
+    <button id="moreBtn">More</button>
+  </div>
+  <div class="row" id="moreRow" style="display:none">
+    <button id="enrollBtn">Enrol face</button>
+    <button id="quotaBtn">Quota</button>
+    <button id="setBtn">Key</button>
+    <button id="clearBtn">Clear log</button>
+  </div>
+</footer>
+
+<script>
+const S = {scanning:false, boxes:true, timer:null, busy:false, hits:0, facing:'environment'};
+const vid=document.getElementById('vid'), overlay=document.getElementById('overlay');
+const statEl=document.getElementById('stat'), hud=document.getElementById('hud');
+const panel=document.getElementById('panel'), dot=document.getElementById('dot');
+let stream=null;
+
+function log(html, cls){
+  if(panel.querySelector('.empty')) panel.innerHTML='';
+  const d=document.createElement('div');
+  d.className='item'+(cls?' '+cls:''); d.innerHTML=html;
+  panel.prepend(d);
+  while(panel.children.length>40) panel.lastChild.remove();
+}
+
+function setStat(t, live){ statEl.textContent=t; dot.className='dot'+(live?' live':''); }
+
+let toastTimer=null;
+function toast(msg, kind){
+  const el=document.getElementById('toast'); if(!el) return;
+  el.textContent=msg; el.className='show'+(kind?' '+kind:'');
+  clearTimeout(toastTimer);
+  toastTimer=setTimeout(function(){ el.className=''; }, 3200);
+}
+
+async function startCamera(facing){
+  if(facing) S.facing=facing;
+  try{
+    if(stream){ stream.getTracks().forEach(t=>t.stop()); stream=null; }
+    stream=await navigator.mediaDevices.getUserMedia({
+      video:{facingMode:S.facing, width:{ideal:1280}, height:{ideal:720}}, audio:false});
+    vid.srcObject=stream; await vid.play();
+    vid.classList.toggle('mirror', S.facing==='user');
+    document.getElementById('gate').style.display='none';
+    setStat(S.facing==='user'?'front camera':'rear camera',true);
+    hud.textContent=(S.facing==='user'?'front':'rear')+' - scan off';
+    S.scanning=true; tick();
+  }catch(e){
+    document.getElementById('gate').querySelector('p').innerHTML=
+      'Camera failed: '+e.message+'. On a phone you need https or localhost.';
+  }
+}
+
+function flipCamera(){
+  startCamera(S.facing==='user'?'environment':'user');
+  var b=document.getElementById('flipBtn');
+  if(b) b.textContent = (S.facing==='user') ? 'Front camera' : 'Rear camera';
+}
+
+function grab(maxW){
+  const vw=vid.videoWidth, vh=vid.videoHeight;
+  if(!vw) return null;
+  const c=document.createElement('canvas');
+  const scale=Math.min(1, maxW/vw);
+  c.width=Math.round(vw*scale); c.height=Math.round(vh*scale);
+  if(S.boxes) c.getContext('2d').drawImage(vid,0,0,c.width,c.height);
+  else c.getContext('2d').drawImage(vid,0,0,c.width,c.height);
+  return c;
+}
+
+function draw(boxes, hits){
+  overlay.innerHTML='';
+  if(!S.boxes) return;
+  const named=hits&&hits.length?hits[0]:null;
+  (boxes||[]).forEach(function(b,i){
+    const d=document.createElement('div');
+    d.className='box'+(named?' hit':'');
+    d.style.left=(b.x*100)+'%'; d.style.top=(b.y*100)+'%';
+    d.style.width=(b.w*100)+'%'; d.style.height=(b.h*100)+'%';
+    const t=document.createElement('span'); t.className='tag';
+    t.textContent=named?(named.label+' '+Math.round(named.score*100)+'%'):'face';
+    d.appendChild(t); overlay.appendChild(d);
+  });
+}
+
+async function tick(){
+  if(!S.scanning) return;
+  const c=grab(480);
+  if(c && !S.busy){
+    S.busy=true;
+    try{
+      const blob=await new Promise(function(r){ c.toBlob(r,'image/jpeg',0.7); });
+      const fd=new FormData(); fd.append('image',blob,'frame.jpg');
+      if(S.boxes) fd.append('boxes','1');
+      const t0=performance.now();
+      const r=await fetch('/api/scan',{method:'POST',body:fd});
+      const j=await r.json();
+      const ms=Math.round(performance.now()-t0);
+      if(j.ok){
+        draw(j.boxes,j.hits);
+        var lens = (S.facing==='user') ? 'front' : 'rear';
+        hud.textContent = lens + ' · ' + (j.boxes?j.boxes.length:0) + ' face' +
+          ((j.boxes&&j.boxes.length===1)?'':'s') + ' · ' + ms + 'ms' +
+          (j.hits&&j.hits.length?' · '+j.hits.length+' known':'');
+        if(j.hits&&j.hits.length){ S.hits++; }
+        setStat('scanning',true);
+      }else{ setStat('error',false); }
+    }catch(e){ setStat('offline',false); }
+    S.busy=false;
+  }
+  S.timer=setTimeout(tick, 220);
+}
+
+async function liveOpen(){
+  const w=document.getElementById('liveWrap');
+  w.classList.add('show');
+  const st=document.getElementById('liveStat');
+  st.textContent='opening a real browser on the server...';
+  try{
+    const r=await fetch('/api/live/start',{method:'POST',headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({url:'https://pimeyes.com/en'})});
+    const j=await r.json();
+    if(!j.ok){ st.textContent='could not open: '+(j.error||'unknown'); return; }
+    st.textContent='press auto solve first - if that fails, the screen below is yours';
+    document.getElementById('liveFrame').src='/'+'novnc/vnc.html?autoconnect=1&resize=scale'+
+      '&path=websockify&reconnect=1&reconnect_delay=800&view_only=0';
+    livePoll();
+  }catch(e){ st.textContent='could not open: '+e.message; }
+}
+
+let liveTimer=null;
+async function livePoll(){
+  clearTimeout(liveTimer);
+  try{
+    const r=await fetch('/api/live/status'); const j=await r.json();
+    const st=document.getElementById('liveStat');
+    if(j.up){ st.textContent=(j.seconds<600?('live '+j.seconds+'s'):'live')+' - '+(j.note||''); }
+    else { st.textContent='session closed'; return; }
+  }catch(e){}
+  liveTimer=setTimeout(livePoll,3000);
+}
+
+async function liveSend(){
+  const st=document.getElementById('liveStat');
+  const c=grab(900); if(!c){ toast('no camera frame','bad'); return; }
+  const blob=await new Promise(function(r){ c.toBlob(r,'image/jpeg',0.9); });
+  const fd=new FormData(); fd.append('image',blob,'face.jpg');
+  st.textContent='sending your face into the browser...';
+  try{
+    const r=await fetch('/api/live/send',{method:'POST',body:fd}); const j=await r.json();
+    st.textContent=j.ok?'face placed - solve the captcha, then read results':('could not send: '+(j.error||''));
+  }catch(e){ st.textContent='could not send: '+e.message; }
+}
+
+async function liveSolve(){
+  const st=document.getElementById('liveStat');
+  st.textContent='trying the captcha myself...';
+  toast('attempting the captcha','');
+  try{
+    const r=await fetch('/api/live/solve',{method:'POST'});
+    const j=await r.json(); const res=j.result||{};
+    (res.steps||[]).forEach(function(m){ log('<span class="dim">'+m+'</span>'); });
+    st.textContent=j.ok?('captcha solved in '+res.rounds+' round(s) - reading results')
+                        :('could not solve it: '+(res.reason||'unknown'));
+    toast(j.ok?'solved - reading results':'could not solve it - use the screen below', j.ok?'good':'bad');
+    openPanel();
+    if(j.ok){ setTimeout(liveResults, 1200); }
+  }catch(e){ st.textContent='solve failed: '+e.message; toast('solve failed','bad'); }
+}
+
+async function liveResults(){
+  const st=document.getElementById('liveStat');
+  st.textContent='reading the page...';
+  try{
+    const r=await fetch('/api/live/results'); const j=await r.json();
+    if(!j.ok){ st.textContent='could not read: '+(j.error||''); return; }
+    const res=j.result||{};
+    const n=(res.matches||[]).length;
+    if(n){
+      st.textContent=n+' image'+(n>1?'s':'')+' found';
+      log('<b>pimeyes results</b> '+n+' image'+(n>1?'s':''));
+      (res.matches||[]).forEach(function(u){
+        log('<a href="'+u+'" target="_blank"><img class="thumb" src="'+u+'"></a>');
+      });
+      openPanel();
+    } else if(res.captcha){
+      st.textContent='still on the captcha or consent screen - solve it first';
+    } else {
+      st.textContent='no images on the page yet ('+(res.url||'')+')';
+      log('<span class="dim">'+((res.text||'').slice(0,200))+'</span>');
+    }
+  }catch(e){ st.textContent='could not read: '+e.message; }
+}
+
+function openPanel(){ const p=document.getElementById('panel'); if(p) p.classList.add('show'); }
+
+async function liveClose(){
+  clearTimeout(liveTimer);
+  document.getElementById('liveWrap').classList.remove('show');
+  try{ await fetch('/api/live/stop',{method:'POST'}); }catch(e){}
+}
+
+async function lookup(){
+  const c=grab(900); if(!c){ toast('no camera frame','bad'); return log('no camera frame'); }
+  const blob=await new Promise(function(r){ c.toBlob(r,'image/jpeg',0.9); });
+  const fd=new FormData(); fd.append('image',blob,'lookup.jpg');
+  fd.append('full','1');
+  log('<span class="dim">sending face for a web lookup</span>');
+  setStat('looking up',true);
+  toast('uploading face to PimEyes...');
+  let elapsed=0;
+  const ticker=setInterval(function(){
+    elapsed+=1;
+    toast('searching PimEyes... '+elapsed+'s (captcha may need you)');
+  },1000);
+  const wasScanning = S.scanning;
+  S.scanning = false;
+  if(S.timer){ clearTimeout(S.timer); S.timer = null; }
+  try{
+    const ctl = new AbortController();
+    const guard = setTimeout(function(){ ctl.abort(); }, 180000);
+    let r, j;
+    try{
+      r=await fetch('/api/lookup',{method:'POST',body:fd,signal:ctl.signal});
+      j=await r.json();
+    } finally { clearTimeout(guard); }
+    if(!j.ok){ toast('lookup failed: '+(j.error||'unknown'),'bad'); log('<span class="crit">lookup failed:</span> '+j.error); setStat('lookup failed',false); return; }
+    if(j.mode==='premium'){
+      toast('premium search returned a result','good');
+      log('<b>premium result</b> '+JSON.stringify(j.result).slice(0,300));
+    }else{
+      let h='<b>face accepted</b><br><span class="k">hash</span> '+j.face.hash+
+            '<br><span class="k">quota</span> '+(j.quota&&j.quota.ok?(j.quota.used+' / '+j.quota.limit+' used today'):'unknown');
+      if(j.steps&&j.steps.length){
+        h+='<br><span class="k">captcha solver</span><br>';
+        for(let i=0;i<j.steps.length;i++){
+          h+='<span class="dim">'+String(j.steps[i]).replace(/[<>&]/g,'')+'</span><br>';
+        }
+      }
+      if(j.search_error) h+='<br><span class="warn">search not run:</span> '+j.search_error;
+      if(j.result&&j.result.url) h+='<br><span class="k">results</span> <a style="color:var(--acc)" href="'+j.result.url+'" target="_blank">open</a>';
+      log(h);
+        toast(j.result&&j.result.url?'PimEyes returned a result page':(j.steps&&j.steps.length?String(j.steps[j.steps.length-1]).slice(0,90):'face accepted, no result page'), j.result&&j.result.url?'good':'bad');
+    }
+    setStat('done',true);
+  }catch(e){
+    toast('lookup failed: '+e.message,'bad');
+    log('<span class="crit">'+e.message+'</span>'); setStat('error',false);
+  }finally{
+    clearInterval(ticker);
+    S.busy=false;
+    if(wasScanning){ S.scanning=true; S.timer=setTimeout(tick,220); }
+  }
+}
+
+async function quota(){
+  const r=await fetch('/api/quota'); const j=await r.json();
+  log(j.ok ? ('<b>quota</b> '+j.used+' / '+j.limit+' searches used today'+(j.blocked?' <span class="crit">blocked</span>':''))
+           : ('<span class="crit">quota unavailable:</span> '+j.error));
+}
+
+async function enrol(){
+  const label=prompt('Label for this face:'); if(label===null) return;
+  const c=grab(900); if(!c){ toast('no camera frame', 'bad'); return log('no camera frame'); }
+  toast('enrolling '+(label||'unnamed')+'...');
+  const blob=await new Promise(function(r){ c.toBlob(r,'image/jpeg',0.9); });
+  const fd=new FormData(); fd.append('image',blob,'face.jpg'); fd.append('label',label||'unnamed');
+  try{
+    const r=await fetch('/api/index',{method:'POST',body:fd}); const j=await r.json();
+    if(j.ok){ toast('enrolled: '+j.label, 'good'); log('<b>enrolled</b> '+j.label); }
+    else { toast('enrol failed: '+(j.error||'unknown'), 'bad'); log('<span class="crit">enrol failed:</span> '+j.error); }
+  }catch(e){
+    toast('enrol failed: '+e.message, 'bad');
+    log('<span class="crit">enrol failed:</span> '+e.message);
+  }
+}
+
+function wire(id,fn){ const el=document.getElementById(id);
+  if(!el){ console.warn('missing button: '+id); return; }
+  el.addEventListener('click',fn); }
+wire('startBtn',()=>startCamera());
+wire('flipBtn',flipCamera);
+wire('scanBtn',function(){
+  S.scanning=!S.scanning; this.textContent=S.scanning?'Scan on':'Scan off';
+  this.classList.toggle('on',S.scanning);
+  if(S.scanning) tick(); else { clearTimeout(S.timer); setStat('idle',false); hud.textContent=(S.facing==='user'?'front':'rear')+' - scan off'; }
+});
+wire('boxesBtn',function(){
+  S.boxes=!S.boxes; this.classList.toggle('on',S.boxes);
+  if(!S.boxes) overlay.innerHTML='';
+});
+wire('lookBtn',lookup);
+wire('liveX',liveClose);
+wire('liveSend',liveSend);
+wire('liveSolve',liveSolve);
+wire('liveGet',liveResults);
+wire('liveBtn',liveOpen);
+wire('quotaBtn',quota);
+wire('enrollBtn',enrol);
+wire('moreBtn',function(){
+  const r=document.getElementById('moreRow');
+  const open=r.style.display==='none'; r.style.display=open?'flex':'none';
+  this.textContent=open?'Less':'More';
+});
+wire('clearBtn',function(){ panel.innerHTML='<div class="empty">No activity yet.</div>'; });
+wire('setBtn',async function(){
+  const r=await fetch('/api/settings'); const j=await r.json();
+  const ep=prompt('Premium endpoint URL (leave blank to use the free path):', j.endpoint||'');
+  if(ep===null) return;
+  const key=prompt('Premium API key (leave blank to clear):','');
+  if(key===null) return;
+  const res=await fetch('/api/settings',{method:'POST',headers:{'Content-Type':'application/json'},
+    body:JSON.stringify({premium_endpoint:ep,premium_key:key})});
+  const out=await res.json();
+  log(out.has_key?'<b>premium key stored</b>':'<span class="dim">no key stored \u2014 using the free path</span>');
+});
+</script>
+</body>
+</html>

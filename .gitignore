@@ -1,0 +1,7 @@
+__pycache__/
+*.pyc
+data/models/
+data/index.json
+data/settings.json
+data/captcha_*.png
+*.log
